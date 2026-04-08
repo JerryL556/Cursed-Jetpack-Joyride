@@ -21,8 +21,14 @@ export class Start extends Phaser.Scene {
         this.activePickupLabel = '';
         this.floorIsLava = false;
         this.lavaTimer = 0;
+        this.lavaDuration = 0;
         this.rocketSalvo = false;
         this.rocketSalvoTimer = 0;
+        this.rocketSalvoDuration = 0;
+        this.wrongMagnet = false;
+        this.wrongMagnetTimer = 0;
+        this.wrongMagnetDuration = 0;
+        this.invincibleMode = false;
         this.damageLevel = 0;
         this.damageResetTimer = 0;
         this.invulnerableTimer = 0;
@@ -198,6 +204,21 @@ export class Start extends Phaser.Scene {
             graphics.generateTexture('pickup-rocket', 40, 40);
             graphics.destroy();
         }
+
+        if (!this.textures.exists('pickup-magnet')) {
+            const graphics = this.make.graphics({ x: 0, y: 0, add: false });
+            graphics.fillStyle(0x20353f, 1);
+            graphics.fillRect(0, 0, 40, 40);
+            graphics.fillStyle(0xf25b4b, 1);
+            graphics.fillRect(8, 8, 8, 18);
+            graphics.fillRect(24, 8, 8, 18);
+            graphics.fillStyle(0x8dd7ff, 1);
+            graphics.fillRect(8, 26, 24, 6);
+            graphics.fillStyle(0xe6f7ff, 1);
+            graphics.fillRect(14, 12, 12, 12);
+            graphics.generateTexture('pickup-magnet', 40, 40);
+            graphics.destroy();
+        }
     }
 
     createBackground() {
@@ -238,6 +259,8 @@ export class Start extends Phaser.Scene {
         this.player.setDepth(3);
         this.player.alive = true;
         this.playerFlame = this.add.graphics();
+        this.magnetAura = this.add.graphics();
+        this.magnetAura.setDepth(2);
 
         this.physics.add.collider(this.player, this.topCollider);
         this.physics.add.collider(this.player, this.bottomCollider);
@@ -264,7 +287,28 @@ export class Start extends Phaser.Scene {
 
         this.scoreText = this.add.text(36, 28, 'DIST 0000', hudStyle).setDepth(5);
         this.coinText = this.add.text(36, 62, 'COINS 00', hudStyle).setDepth(5);
-        this.pickupText = this.add.text(36, 96, '', hudStyle).setDepth(5);
+        this.invincibleText = this.add.text(36, 130, 'INVINCIBILITY ON', {
+            fontFamily: 'monospace',
+            fontSize: '24px',
+            color: '#8dffb3'
+        }).setDepth(5).setVisible(false);
+        this.statusSlots = Array.from({ length: 3 }, (_, index) => {
+            const y = 74 + (index * 34);
+            const text = this.add.text(GAME_WIDTH / 2, y, '', {
+                fontFamily: 'monospace',
+                fontSize: '24px',
+                color: '#ffffff'
+            }).setOrigin(0.5, 0).setDepth(6).setVisible(false);
+            const barBg = this.add.rectangle(GAME_WIDTH / 2, y + 26, 260, 8, 0x120f12, 0.85)
+                .setDepth(6)
+                .setVisible(false);
+            const bar = this.add.rectangle((GAME_WIDTH / 2) - 130, y + 26, 260, 8, 0xff8a2a, 1)
+                .setOrigin(0, 0.5)
+                .setDepth(7)
+                .setVisible(false);
+
+            return { text, barBg, bar };
+        });
         this.helpText = this.add.text(
             GAME_WIDTH / 2,
             36,
@@ -282,6 +326,7 @@ export class Start extends Phaser.Scene {
 
     createInput() {
         this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+        this.invincibleKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.I);
 
         this.input.on('pointerdown', (pointer) => {
             if (pointer.leftButtonDown()) {
@@ -308,6 +353,11 @@ export class Start extends Phaser.Scene {
             return;
         }
 
+        if (Phaser.Input.Keyboard.JustDown(this.invincibleKey)) {
+            this.invincibleMode = !this.invincibleMode;
+            this.invincibleText.setVisible(this.invincibleMode);
+        }
+
         this.scrollBackground(dt);
         this.speed += dt * 2.5;
         this.distance += dt * this.speed * 0.1;
@@ -315,6 +365,7 @@ export class Start extends Phaser.Scene {
         this.handleFlight();
         this.updateLavaState(dt);
         this.updateRocketSalvoState(dt);
+        this.updateWrongMagnetState(dt);
         this.updateDamageState(dt);
         this.updatePlayerEffects();
         this.advanceEntities(dt);
@@ -335,8 +386,8 @@ export class Start extends Phaser.Scene {
         const thrusting = this.spaceKey.isDown || this.input.activePointer.leftButtonDown();
         const body = this.player.body;
 
-        body.velocity.y += thrusting ? -38 : 30;
-        body.velocity.y = Phaser.Math.Clamp(body.velocity.y, -420, 520);
+        body.velocity.y += thrusting ? -46 : 36;
+        body.velocity.y = Phaser.Math.Clamp(body.velocity.y, -500, 580);
 
         if (this.player.y <= TOP_BOUNDARY + 30 && body.velocity.y < 0) {
             body.velocity.y = 0;
@@ -409,6 +460,7 @@ export class Start extends Phaser.Scene {
             this.activePickupLabel = '';
             this.lava.setVisible(false);
             this.lavaGlow.setVisible(false);
+            this.lavaTimer = 0;
         }
     }
 
@@ -423,6 +475,29 @@ export class Start extends Phaser.Scene {
             this.rocketSalvo = false;
             this.rocketSalvoTimer = 0;
             this.activePickupLabel = '';
+        }
+    }
+
+    updateWrongMagnetState(dt) {
+        this.magnetAura.clear();
+
+        if (!this.wrongMagnet) {
+            return;
+        }
+
+        this.wrongMagnetTimer -= dt;
+
+        const pulse = 62 + Math.sin(this.time.now * 0.02) * 6;
+        this.magnetAura.lineStyle(3, 0x8dd7ff, 0.65);
+        this.magnetAura.strokeCircle(this.player.x, this.player.y, pulse);
+        this.magnetAura.lineStyle(2, 0xff6b5e, 0.45);
+        this.magnetAura.strokeCircle(this.player.x, this.player.y, pulse - 12);
+
+        if (this.wrongMagnetTimer <= 0) {
+            this.wrongMagnet = false;
+            this.wrongMagnetTimer = 0;
+            this.activePickupLabel = '';
+            this.magnetAura.clear();
         }
     }
 
@@ -557,9 +632,15 @@ export class Start extends Phaser.Scene {
         const pickup = this.pickups.create(
             GAME_WIDTH + 120,
             pickupY,
-            Phaser.Math.Between(0, 1) === 0 ? 'pickup-lava' : 'pickup-rocket'
+            ['pickup-lava', 'pickup-rocket', 'pickup-magnet'][Phaser.Math.Between(0, 2)]
         );
-        pickup.pickupType = pickup.texture.key === 'pickup-lava' ? 'floor-lava' : 'rocket-salvo';
+        if (pickup.texture.key === 'pickup-lava') {
+            pickup.pickupType = 'floor-lava';
+        } else if (pickup.texture.key === 'pickup-rocket') {
+            pickup.pickupType = 'rocket-salvo';
+        } else {
+            pickup.pickupType = 'wrong-magnet';
+        }
         pickup.body.setSize(30, 30);
         pickup.body.setOffset(5, 5);
     }
@@ -602,6 +683,21 @@ export class Start extends Phaser.Scene {
                 }
 
                 entity.x -= baseSpeed * dt;
+
+                if (this.wrongMagnet && entity.texture?.key === 'coin') {
+                    const dx = entity.x - this.player.x;
+                    const dy = entity.y - this.player.y;
+                    const distance = Math.max(1, Math.hypot(dx, dy));
+                    const repelRange = 260;
+
+                    if (distance < repelRange) {
+                        const repel = (repelRange - distance) * 2.2 * dt;
+                        entity.x += (dx / distance) * repel;
+                        entity.y += (dy / distance) * repel + Math.cos(this.time.now * 0.015 + entity.x * 0.02) * 38 * dt;
+                        entity.y = Phaser.Math.Clamp(entity.y, TOP_BOUNDARY + 36, BOTTOM_BOUNDARY - 36);
+                    }
+                }
+
                 entity.body.reset(entity.x, entity.y);
                 if (entity.visual) {
                     entity.visual.x = entity.x;
@@ -630,7 +726,7 @@ export class Start extends Phaser.Scene {
     }
 
     collectCoin(_, coin) {
-        if (coin.collected || this.isGameOver) {
+        if (coin.collected || this.isGameOver || this.wrongMagnet) {
             return;
         }
 
@@ -646,15 +742,22 @@ export class Start extends Phaser.Scene {
 
         if (pickup.pickupType === 'floor-lava') {
             this.floorIsLava = true;
-            this.lavaTimer = 7;
+            this.lavaDuration = 7;
+            this.lavaTimer = this.lavaDuration;
             this.activePickupLabel = 'PICKUP FLOOR IS LAVA';
             this.lava.setVisible(true);
             this.lavaGlow.setVisible(true);
         } else if (pickup.pickupType === 'rocket-salvo') {
             this.rocketSalvo = true;
-            this.rocketSalvoTimer = 5;
+            this.rocketSalvoDuration = 5;
+            this.rocketSalvoTimer = this.rocketSalvoDuration;
             this.activePickupLabel = 'PICKUP ROCKET SALVO';
             this.nextMissileAt = Math.min(this.nextMissileAt, 120);
+        } else if (pickup.pickupType === 'wrong-magnet') {
+            this.wrongMagnet = true;
+            this.wrongMagnetDuration = 15;
+            this.wrongMagnetTimer = this.wrongMagnetDuration;
+            this.activePickupLabel = 'PICKUP WRONG MAGNET';
         }
 
         pickup.destroy();
@@ -662,6 +765,10 @@ export class Start extends Phaser.Scene {
 
     hitHazard(hazard) {
         if (this.isGameOver) {
+            return;
+        }
+
+        if (this.invincibleMode) {
             return;
         }
 
@@ -698,22 +805,50 @@ export class Start extends Phaser.Scene {
     updateHud() {
         this.scoreText.setText(`DIST ${Math.floor(this.distance).toString().padStart(4, '0')}`);
         this.coinText.setText(`COINS ${this.coinScore.toString().padStart(2, '0')}`);
+        const statuses = [];
         if (this.floorIsLava) {
-            this.pickupText.setText(`LAVA ${Math.ceil(this.lavaTimer)}S`);
-            return;
+            statuses.push({
+                label: 'THE FLOOR IS LAVA!',
+                color: 0xff7a21,
+                progress: this.lavaDuration > 0 ? this.lavaTimer / this.lavaDuration : 0
+            });
         }
 
         if (this.rocketSalvo) {
-            this.pickupText.setText(`ROCKET SALVO ${Math.ceil(this.rocketSalvoTimer)}S`);
-            return;
+            statuses.push({
+                label: 'ROCKET SALVO!',
+                color: 0xffd54a,
+                progress: this.rocketSalvoDuration > 0 ? this.rocketSalvoTimer / this.rocketSalvoDuration : 0
+            });
         }
 
-        if (this.damageLevel > 0) {
-            this.pickupText.setText(`SECOND CHANCE ${Math.ceil(this.damageResetTimer)}S`);
-            return;
+        if (this.wrongMagnet) {
+            statuses.push({
+                label: 'WRONG MAGNET!',
+                color: 0x5c84ff,
+                progress: this.wrongMagnetDuration > 0 ? this.wrongMagnetTimer / this.wrongMagnetDuration : 0
+            });
         }
 
-        this.pickupText.setText(this.activePickupLabel);
+        this.statusSlots.forEach((slot, index) => {
+            const status = statuses[index];
+
+            if (!status) {
+                slot.text.setVisible(false);
+                slot.barBg.setVisible(false);
+                slot.bar.setVisible(false);
+                return;
+            }
+
+            const progress = Phaser.Math.Clamp(status.progress, 0, 1);
+            slot.text.setText(status.label);
+            slot.text.setColor(`#${status.color.toString(16).padStart(6, '0')}`);
+            slot.text.setVisible(true);
+            slot.barBg.setVisible(true);
+            slot.bar.setFillStyle(status.color, 1);
+            slot.bar.width = 260 * progress;
+            slot.bar.setVisible(true);
+        });
     }
 
 }
