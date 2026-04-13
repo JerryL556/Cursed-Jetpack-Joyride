@@ -19,6 +19,7 @@ export class Start extends Phaser.Scene {
         this.highScore = this.loadHighScore();
         this.coinScore = 0;
         this.isGameOver = false;
+        this.gameOverLockTimer = 0;
         this.deathReason = '';
         this.activePickupLabel = '';
         this.floorIsLava = false;
@@ -363,6 +364,9 @@ export class Start extends Phaser.Scene {
             'SPACE OR LEFT CLICK TO FLY',
             { fontFamily: 'monospace', fontSize: '24px', color: '#8dd7ff' }
         ).setOrigin(0.5, 0).setDepth(5);
+        this.gameOverOverlay = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.68)
+            .setDepth(5.5)
+            .setVisible(false);
 
         this.gameOverText = this.add.text(
             GAME_WIDTH / 2,
@@ -378,7 +382,7 @@ export class Start extends Phaser.Scene {
 
         this.input.on('pointerdown', (pointer) => {
             if (pointer.leftButtonDown()) {
-                if (this.isGameOver) {
+                if (this.isGameOver && this.gameOverLockTimer <= 0) {
                     this.scene.restart();
                 }
             }
@@ -396,7 +400,9 @@ export class Start extends Phaser.Scene {
         const dt = delta / 1000;
 
         if (this.isGameOver) {
-            if (Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
+            this.gameOverLockTimer = Math.max(0, this.gameOverLockTimer - dt);
+
+            if (this.gameOverLockTimer <= 0 && Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
                 this.scene.restart();
             }
             return;
@@ -426,8 +432,8 @@ export class Start extends Phaser.Scene {
 
     scrollBackground(dt) {
         this.background.tilePositionX += this.speed * dt * 0.22;
-        this.ceiling.tilePositionX += this.speed * dt * 0.7;
-        this.floor.tilePositionX += this.speed * dt * 0.7;
+        this.ceiling.tilePositionX += this.speed * dt;
+        this.floor.tilePositionX += this.speed * dt;
         if (this.floorIsLava) {
             this.lava.tilePositionX += this.speed * dt;
         }
@@ -1099,17 +1105,28 @@ export class Start extends Phaser.Scene {
             this.deathReason = 'ZAPPED';
         }
         this.isGameOver = true;
+        this.gameOverLockTimer = 1;
         this.player.setTint(0xff8a8a);
         this.player.alpha = 1;
         this.player.body.setVelocity(0, 0);
         this.player.setAngle(90);
         this.clearJetpackEffects();
         this.refreshHighScore();
+        this.gameOverOverlay.setVisible(true);
         this.gameOverText.setText(
-            `RUN OVER\nCAUSE: ${this.deathReason}\nBEST ${this.highScore.toString().padStart(4, '0')}\nPRESS SPACE OR CLICK TO RESTART`
+            `RUN OVER\nCAUSE: ${this.deathReason}\nBEST ${this.highScore.toString().padStart(4, '0')}\nRESTART AVAILABLE IN 1 SECOND`
         );
         this.gameOverText.setVisible(true);
-        this.helpText.setText('PRESS SPACE OR LEFT CLICK TO RESTART');
+        this.time.delayedCall(1000, () => {
+            if (!this.scene.isActive()) {
+                return;
+            }
+
+            this.gameOverText.setText(
+                `RUN OVER\nCAUSE: ${this.deathReason}\nBEST ${this.highScore.toString().padStart(4, '0')}\nPRESS SPACE OR CLICK TO RESTART`
+            );
+        });
+        this.helpText.setText(' ');
     }
 
     updateHud() {
