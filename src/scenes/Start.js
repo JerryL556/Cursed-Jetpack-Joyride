@@ -37,6 +37,7 @@ export class Start extends Phaser.Scene {
         this.nextZapperAt = 0;
         this.nextMissileAt = 0;
         this.nextPickupAt = 0;
+        this.nextChestAt = 0;
         this.missileWarnings = [];
         this.jetpackBullets = [];
         this.jetpackShells = [];
@@ -250,6 +251,23 @@ export class Start extends Phaser.Scene {
             graphics.generateTexture('jetpack-shell', 10, 4);
             graphics.destroy();
         }
+
+        if (!this.textures.exists('coin-chest')) {
+            const graphics = this.make.graphics({ x: 0, y: 0, add: false });
+            graphics.fillStyle(0x3b2417, 1);
+            graphics.fillRect(0, 8, 52, 28);
+            graphics.fillStyle(0x6f4021, 1);
+            graphics.fillRect(4, 12, 44, 20);
+            graphics.fillStyle(0xa9672b, 1);
+            graphics.fillRect(0, 4, 52, 10);
+            graphics.fillStyle(0xe7c85a, 1);
+            graphics.fillRect(22, 8, 8, 22);
+            graphics.fillRect(6, 16, 40, 4);
+            graphics.fillStyle(0x2a160d, 1);
+            graphics.fillRect(20, 18, 12, 8);
+            graphics.generateTexture('coin-chest', 52, 36);
+            graphics.destroy();
+        }
     }
 
     createBackground() {
@@ -264,12 +282,6 @@ export class Start extends Phaser.Scene {
         this.lavaGlow = this.add.rectangle(GAME_WIDTH / 2, BOTTOM_BOUNDARY - 6, GAME_WIDTH, 20, 0xffa12e, 0.28);
         this.lavaGlow.setVisible(false);
         this.lavaGlow.setDepth(2);
-
-        const guide = this.add.graphics();
-        guide.fillStyle(0x6ef0ff, 0.14);
-        for (let x = 0; x < GAME_WIDTH; x += 80) {
-            guide.fillRect(x, TOP_BOUNDARY, 6, BOTTOM_BOUNDARY - TOP_BOUNDARY);
-        }
     }
 
     createBounds() {
@@ -303,6 +315,7 @@ export class Start extends Phaser.Scene {
         this.coins = this.physics.add.group({ allowGravity: false, immovable: true });
         this.missiles = this.physics.add.group({ allowGravity: false, immovable: true });
         this.pickups = this.physics.add.group({ allowGravity: false, immovable: true });
+        this.chests = this.physics.add.group({ allowGravity: false, immovable: true });
 
         this.physics.add.overlap(this.player, this.hazards, (_, hazard) => this.hitHazard(hazard), null, this);
         this.physics.add.overlap(this.player, this.missiles, (_, missile) => this.hitHazard(missile), null, this);
@@ -376,6 +389,7 @@ export class Start extends Phaser.Scene {
         this.nextZapperAt = 180;
         this.nextMissileAt = 360;
         this.nextPickupAt = 900;
+        this.nextChestAt = 1250;
     }
 
     update(_, delta) {
@@ -541,6 +555,17 @@ export class Start extends Phaser.Scene {
             bullet.life -= dt;
             bullet.alpha = Math.max(0.2, bullet.life / 1.2);
 
+            const hitChest = this.chests.getChildren().find((chest) =>
+                chest.active && Phaser.Geom.Intersects.RectangleToRectangle(bullet.getBounds(), chest.getBounds())
+            );
+
+            if (hitChest) {
+                this.burstChestCoins(hitChest);
+                hitChest.destroy();
+                bullet.destroy();
+                return false;
+            }
+
             if (bullet.y >= BOTTOM_BOUNDARY - 8) {
                 this.spawnJetpackImpact(bullet.x);
                 bullet.destroy();
@@ -631,6 +656,7 @@ export class Start extends Phaser.Scene {
         this.nextZapperAt -= this.speed * dt;
         this.nextMissileAt -= this.speed * dt;
         this.nextPickupAt -= this.speed * dt;
+        this.nextChestAt -= this.speed * dt;
 
         if (this.nextZapperAt <= 0) {
             this.spawnZapperGate();
@@ -647,6 +673,11 @@ export class Start extends Phaser.Scene {
         if (this.nextPickupAt <= 0) {
             this.spawnPickup();
             this.nextPickupAt = Phaser.Math.Between(1600, 2200);
+        }
+
+        if (this.nextChestAt <= 0) {
+            this.spawnChest();
+            this.nextChestAt = Phaser.Math.Between(1700, 2400);
         }
     }
 
@@ -856,6 +887,52 @@ export class Start extends Phaser.Scene {
         pickup.body.setOffset(5, 5);
     }
 
+    spawnChest() {
+        const chest = this.chests.create(GAME_WIDTH + 120, BOTTOM_BOUNDARY - 10, 'coin-chest');
+        chest.setOrigin(0.5, 1);
+        chest.setDepth(2);
+        chest.body.setSize(44, 28);
+        chest.body.setOffset(4, 8);
+        chest.rewardCoins = 15;
+    }
+
+    burstChestCoins(chest) {
+        const burstX = chest.x;
+        const burstY = chest.y - 26;
+
+        for (let index = 0; index < chest.rewardCoins; index++) {
+            const coin = this.coins.create(burstX + Phaser.Math.Between(-8, 8), burstY + Phaser.Math.Between(-6, 6), 'coin');
+            coin.body.setCircle(12, 4, 4);
+            coin.body.setImmovable(true);
+            coin.collected = false;
+            coin.homeToPlayer = true;
+            coin.homeDelay = index * 0.015;
+            coin.vx = Phaser.Math.Between(-180, 180);
+            coin.vy = Phaser.Math.Between(-260, -120);
+            coin.setDepth(3);
+        }
+
+        this.spawnChestExplosion(chest.x, chest.y - 16);
+    }
+
+    spawnChestExplosion(x, y) {
+        for (let index = 0; index < 8; index++) {
+            const particle = this.add.rectangle(
+                x + Phaser.Math.Between(-18, 18),
+                y + Phaser.Math.Between(-12, 8),
+                Phaser.Math.Between(4, 8),
+                Phaser.Math.Between(3, 6),
+                index < 4 ? 0xe7c85a : 0x7a4a24,
+                0.95
+            );
+            particle.setDepth(3);
+            particle.vx = Phaser.Math.Between(-220, 220);
+            particle.vy = Phaser.Math.Between(-320, -80);
+            particle.life = 0.22 + (index * 0.02);
+            this.jetpackImpactParticles.push(particle);
+        }
+    }
+
     spawnMissileWarning() {
         const y = Phaser.Math.Between(TOP_BOUNDARY + 60, BOTTOM_BOUNDARY - 60);
         const warning = this.add.sprite(GAME_WIDTH - 64, y, 'warning');
@@ -895,7 +972,7 @@ export class Start extends Phaser.Scene {
 
                 entity.x -= baseSpeed * dt;
 
-                if (this.wrongMagnet && entity.texture?.key === 'coin') {
+                if (this.wrongMagnet && entity.texture?.key === 'coin' && !entity.homeToPlayer) {
                     const dx = entity.x - this.player.x;
                     const dy = entity.y - this.player.y;
                     const distance = Math.max(1, Math.hypot(dx, dy));
@@ -907,6 +984,24 @@ export class Start extends Phaser.Scene {
                         entity.y += (dy / distance) * repel + Math.cos(this.time.now * 0.015 + entity.x * 0.02) * 38 * dt;
                         entity.y = Phaser.Math.Clamp(entity.y, TOP_BOUNDARY + 36, BOTTOM_BOUNDARY - 36);
                     }
+                }
+
+                if (entity.homeToPlayer) {
+                    entity.homeDelay = Math.max(0, (entity.homeDelay ?? 0) - dt);
+
+                    if (entity.homeDelay <= 0) {
+                        const dx = this.player.x - entity.x;
+                        const dy = this.player.y - entity.y;
+                        const distance = Math.max(1, Math.hypot(dx, dy));
+                        const homingSpeed = 780;
+                        entity.vx = Phaser.Math.Linear(entity.vx ?? 0, (dx / distance) * homingSpeed, 0.22);
+                        entity.vy = Phaser.Math.Linear(entity.vy ?? 0, (dy / distance) * homingSpeed, 0.22);
+                    } else {
+                        entity.vy = (entity.vy ?? 0) + (420 * dt);
+                    }
+
+                    entity.x += (entity.vx ?? 0) * dt;
+                    entity.y += (entity.vy ?? 0) * dt;
                 }
 
                 entity.body.reset(entity.x, entity.y);
@@ -932,12 +1027,13 @@ export class Start extends Phaser.Scene {
         moveLeft(this.coins, this.speed);
         moveLeft(this.missiles, this.speed + 140);
         moveLeft(this.pickups, this.speed);
+        moveLeft(this.chests, this.speed);
 
         this.missileWarnings = this.missileWarnings.filter((warning) => warning.active);
     }
 
     collectCoin(_, coin) {
-        if (coin.collected || this.isGameOver || this.wrongMagnet) {
+        if (coin.collected || this.isGameOver || (this.wrongMagnet && !coin.homeToPlayer)) {
             return;
         }
 
