@@ -3,6 +3,7 @@ const GAME_HEIGHT = 720;
 const TOP_BOUNDARY = 92;
 const BOTTOM_BOUNDARY = 628;
 const PLAYER_X = 220;
+const HIGH_SCORE_STORAGE_KEY = 'cursed-jetpack-joyride-high-score';
 
 export class Start extends Phaser.Scene {
 
@@ -15,6 +16,7 @@ export class Start extends Phaser.Scene {
     create() {
         this.speed = 340;
         this.distance = 0;
+        this.highScore = this.loadHighScore();
         this.coinScore = 0;
         this.isGameOver = false;
         this.deathReason = '';
@@ -36,6 +38,11 @@ export class Start extends Phaser.Scene {
         this.nextMissileAt = 0;
         this.nextPickupAt = 0;
         this.missileWarnings = [];
+        this.jetpackBullets = [];
+        this.jetpackShells = [];
+        this.jetpackMuzzleParticles = [];
+        this.jetpackImpactParticles = [];
+        this.jetpackFireTimer = 0;
 
         this.createTextures();
         this.createBackground();
@@ -219,6 +226,30 @@ export class Start extends Phaser.Scene {
             graphics.generateTexture('pickup-magnet', 40, 40);
             graphics.destroy();
         }
+
+        if (!this.textures.exists('jetpack-bullet')) {
+            const graphics = this.make.graphics({ x: 0, y: 0, add: false });
+            graphics.fillStyle(0xfff6d8, 1);
+            graphics.fillRect(0, 1, 22, 4);
+            graphics.fillStyle(0xffb347, 1);
+            graphics.fillRect(4, 0, 12, 6);
+            graphics.fillStyle(0xff6a2a, 1);
+            graphics.fillRect(16, 1, 4, 4);
+            graphics.generateTexture('jetpack-bullet', 22, 6);
+            graphics.destroy();
+        }
+
+        if (!this.textures.exists('jetpack-shell')) {
+            const graphics = this.make.graphics({ x: 0, y: 0, add: false });
+            graphics.fillStyle(0xf1c15a, 1);
+            graphics.fillRect(0, 0, 10, 4);
+            graphics.fillStyle(0xd59a35, 1);
+            graphics.fillRect(1, 1, 7, 2);
+            graphics.fillStyle(0xb67623, 1);
+            graphics.fillRect(8, 0, 2, 4);
+            graphics.generateTexture('jetpack-shell', 10, 4);
+            graphics.destroy();
+        }
     }
 
     createBackground() {
@@ -259,6 +290,7 @@ export class Start extends Phaser.Scene {
         this.player.setDepth(3);
         this.player.alive = true;
         this.playerFlame = this.add.graphics();
+        this.playerFlame.setDepth(2);
         this.magnetAura = this.add.graphics();
         this.magnetAura.setDepth(2);
 
@@ -287,6 +319,9 @@ export class Start extends Phaser.Scene {
 
         this.scoreText = this.add.text(36, 28, 'DIST 0000', hudStyle).setDepth(5);
         this.coinText = this.add.text(36, 62, 'COINS 00', hudStyle).setDepth(5);
+        this.highScoreText = this.add.text(GAME_WIDTH - 36, 28, 'BEST 0000', hudStyle)
+            .setOrigin(1, 0)
+            .setDepth(5);
         this.invincibleText = this.add.text(36, 130, 'INVINCIBILITY ON', {
             fontFamily: 'monospace',
             fontSize: '24px',
@@ -319,7 +354,7 @@ export class Start extends Phaser.Scene {
         this.gameOverText = this.add.text(
             GAME_WIDTH / 2,
             GAME_HEIGHT / 2,
-            'RUN OVER\nCAUSE: -\nPRESS SPACE OR CLICK TO RESTART',
+            'RUN OVER\nCAUSE: -\nBEST 0000\nPRESS SPACE OR CLICK TO RESTART',
             { fontFamily: 'monospace', fontSize: '32px', color: '#fff2c7', align: 'center' }
         ).setOrigin(0.5).setDepth(6).setVisible(false);
     }
@@ -361,6 +396,7 @@ export class Start extends Phaser.Scene {
         this.scrollBackground(dt);
         this.speed += dt * 2.5;
         this.distance += dt * this.speed * 0.1;
+        this.refreshHighScore();
 
         this.handleFlight();
         this.updateLavaState(dt);
@@ -368,6 +404,7 @@ export class Start extends Phaser.Scene {
         this.updateWrongMagnetState(dt);
         this.updateDamageState(dt);
         this.updatePlayerEffects();
+        this.advanceJetpackEffects(dt);
         this.advanceEntities(dt);
         this.handleSpawns(dt);
         this.updateHud();
@@ -401,19 +438,193 @@ export class Start extends Phaser.Scene {
     }
 
     updatePlayerEffects() {
-        const body = this.player.body;
         this.playerFlame.clear();
 
-        if (this.isGameOver || body.velocity.y > 120) {
+        if (this.isGameOver) {
             return;
         }
 
-        this.playerFlame.fillStyle(0xfff08a, 1);
-        this.playerFlame.fillRect(this.player.x - 30, this.player.y + 6, 12, 8);
-        this.playerFlame.fillStyle(0xff8d3b, 1);
-        this.playerFlame.fillRect(this.player.x - 42, this.player.y + 8, 12, 4);
-        this.playerFlame.fillStyle(0xff5533, 1);
-        this.playerFlame.fillRect(this.player.x - 48, this.player.y + 9, 8, 2);
+        const thrusting = this.spaceKey.isDown || this.input.activePointer.leftButtonDown();
+        if (!thrusting) {
+            return;
+        }
+
+        const muzzleX = this.player.x + 6;
+        const muzzleY = this.player.y + 34;
+        const flashSize = 14 + ((Math.sin(this.time.now * 0.25) + 1) * 3);
+
+        this.playerFlame.fillStyle(0xfff7bf, 1);
+        this.playerFlame.fillRect(muzzleX - 6, muzzleY, 12, flashSize);
+        this.playerFlame.fillStyle(0xffb347, 0.95);
+        this.playerFlame.fillRect(muzzleX - 4, muzzleY + flashSize - 2, 8, flashSize - 2);
+        this.playerFlame.fillStyle(0xff6b2d, 0.9);
+        this.playerFlame.fillRect(muzzleX - 2, muzzleY + (flashSize * 2) - 6, 4, flashSize - 4);
+
+        this.jetpackFireTimer -= this.game.loop.delta;
+        while (this.jetpackFireTimer <= 0) {
+            this.spawnJetpackBullet(muzzleX, muzzleY);
+            this.spawnJetpackShell(muzzleX, muzzleY);
+            this.spawnJetpackMuzzleBurst(muzzleX, muzzleY);
+            this.jetpackFireTimer += 28;
+        }
+    }
+
+    spawnJetpackBullet(muzzleX, muzzleY) {
+        const bullet = this.add.image(muzzleX + Phaser.Math.Between(-5, 5), muzzleY + 14, 'jetpack-bullet');
+        bullet.setOrigin(0.5, 0);
+        bullet.setDepth(2);
+        bullet.setAngle(90 + Phaser.Math.Between(-8, 8));
+        bullet.vx = Phaser.Math.Between(-30, 30);
+        bullet.vy = Phaser.Math.Between(880, 1080);
+        bullet.life = 1.2;
+        this.jetpackBullets.push(bullet);
+    }
+
+    spawnJetpackShell(muzzleX, muzzleY) {
+        const shell = this.add.image(muzzleX + Phaser.Math.Between(-10, 10), muzzleY - 2, 'jetpack-shell');
+        shell.setDepth(4);
+        shell.angle = Phaser.Math.Between(-30, 30);
+        shell.vx = -Phaser.Math.Between(160, 260);
+        shell.vy = Phaser.Math.Between(40, 130);
+        shell.spin = Phaser.Math.Between(-720, 720);
+        shell.life = 0.7;
+        this.jetpackShells.push(shell);
+    }
+
+    spawnJetpackMuzzleBurst(muzzleX, muzzleY) {
+        for (let index = 0; index < 3; index++) {
+            const particle = this.add.rectangle(
+                muzzleX + Phaser.Math.Between(-5, 5),
+                muzzleY + Phaser.Math.Between(0, 10),
+                Phaser.Math.Between(3, 6),
+                Phaser.Math.Between(3, 6),
+                index === 0 ? 0xfff2b3 : (index === 1 ? 0xffa347 : 0xff6b2d),
+                0.95
+            );
+            particle.setDepth(2);
+            particle.vx = Phaser.Math.Between(-50, 50);
+            particle.vy = Phaser.Math.Between(120, 260);
+            particle.life = 0.12 + (index * 0.03);
+            this.jetpackMuzzleParticles.push(particle);
+        }
+    }
+
+    spawnJetpackImpact(bulletX) {
+        const impactY = BOTTOM_BOUNDARY - 8;
+
+        for (let index = 0; index < 5; index++) {
+            const particle = this.add.rectangle(
+                bulletX + Phaser.Math.Between(-10, 10),
+                impactY + Phaser.Math.Between(-2, 4),
+                Phaser.Math.Between(3, 7),
+                Phaser.Math.Between(2, 5),
+                index < 2 ? 0xfff0b8 : (index < 4 ? 0xff9c42 : 0x6c748f),
+                0.95
+            );
+            particle.setDepth(3);
+            particle.vx = Phaser.Math.Between(-180, 180);
+            particle.vy = Phaser.Math.Between(-320, -120);
+            particle.life = 0.18 + (index * 0.03);
+            this.jetpackImpactParticles.push(particle);
+        }
+    }
+
+    advanceJetpackEffects(dt) {
+        this.jetpackBullets = this.jetpackBullets.filter((bullet) => {
+            if (!bullet.active) {
+                return false;
+            }
+
+            bullet.x += bullet.vx * dt;
+            bullet.y += bullet.vy * dt;
+            bullet.vy += 180 * dt;
+            bullet.life -= dt;
+            bullet.alpha = Math.max(0.2, bullet.life / 1.2);
+
+            if (bullet.y >= BOTTOM_BOUNDARY - 8) {
+                this.spawnJetpackImpact(bullet.x);
+                bullet.destroy();
+                return false;
+            }
+
+            if (bullet.life <= 0 || bullet.x < -80 || bullet.x > GAME_WIDTH + 80 || bullet.y > GAME_HEIGHT + 80) {
+                bullet.destroy();
+                return false;
+            }
+
+            return true;
+        });
+
+        this.jetpackMuzzleParticles = this.jetpackMuzzleParticles.filter((particle) => {
+            if (!particle.active) {
+                return false;
+            }
+
+            particle.x += particle.vx * dt;
+            particle.y += particle.vy * dt;
+            particle.vy += 180 * dt;
+            particle.life -= dt;
+            particle.alpha = Math.max(0, particle.life / 0.18);
+
+            if (particle.life <= 0) {
+                particle.destroy();
+                return false;
+            }
+
+            return true;
+        });
+
+        this.jetpackImpactParticles = this.jetpackImpactParticles.filter((particle) => {
+            if (!particle.active) {
+                return false;
+            }
+
+            particle.x += particle.vx * dt;
+            particle.y += particle.vy * dt;
+            particle.vy += 640 * dt;
+            particle.life -= dt;
+            particle.alpha = Math.max(0, particle.life / 0.3);
+
+            if (particle.life <= 0 || particle.y > GAME_HEIGHT + 20) {
+                particle.destroy();
+                return false;
+            }
+
+            return true;
+        });
+
+        this.jetpackShells = this.jetpackShells.filter((shell) => {
+            if (!shell.active) {
+                return false;
+            }
+
+            shell.x += shell.vx * dt;
+            shell.y += shell.vy * dt;
+            shell.vy += 620 * dt;
+            shell.angle += shell.spin * dt;
+            shell.life -= dt;
+            shell.alpha = Math.max(0, shell.life / 0.7);
+
+            if (shell.life <= 0 || shell.x < -80 || shell.y > GAME_HEIGHT + 80) {
+                shell.destroy();
+                return false;
+            }
+
+            return true;
+        });
+    }
+
+    clearJetpackEffects() {
+        this.playerFlame.clear();
+        this.jetpackBullets.forEach((bullet) => bullet.destroy());
+        this.jetpackShells.forEach((shell) => shell.destroy());
+        this.jetpackMuzzleParticles.forEach((particle) => particle.destroy());
+        this.jetpackImpactParticles.forEach((particle) => particle.destroy());
+        this.jetpackBullets = [];
+        this.jetpackShells = [];
+        this.jetpackMuzzleParticles = [];
+        this.jetpackImpactParticles = [];
+        this.jetpackFireTimer = 0;
     }
 
     handleSpawns(dt) {
@@ -796,8 +1007,11 @@ export class Start extends Phaser.Scene {
         this.player.alpha = 1;
         this.player.body.setVelocity(0, 0);
         this.player.setAngle(90);
-        this.playerFlame.clear();
-        this.gameOverText.setText(`RUN OVER\nCAUSE: ${this.deathReason}\nPRESS SPACE OR CLICK TO RESTART`);
+        this.clearJetpackEffects();
+        this.refreshHighScore();
+        this.gameOverText.setText(
+            `RUN OVER\nCAUSE: ${this.deathReason}\nBEST ${this.highScore.toString().padStart(4, '0')}\nPRESS SPACE OR CLICK TO RESTART`
+        );
         this.gameOverText.setVisible(true);
         this.helpText.setText('PRESS SPACE OR LEFT CLICK TO RESTART');
     }
@@ -805,6 +1019,7 @@ export class Start extends Phaser.Scene {
     updateHud() {
         this.scoreText.setText(`DIST ${Math.floor(this.distance).toString().padStart(4, '0')}`);
         this.coinText.setText(`COINS ${this.coinScore.toString().padStart(2, '0')}`);
+        this.highScoreText.setText(`BEST ${this.highScore.toString().padStart(4, '0')}`);
         const statuses = [];
         if (this.floorIsLava) {
             statuses.push({
@@ -849,6 +1064,23 @@ export class Start extends Phaser.Scene {
             slot.bar.width = 260 * progress;
             slot.bar.setVisible(true);
         });
+    }
+
+    loadHighScore() {
+        const storedValue = window.localStorage.getItem(HIGH_SCORE_STORAGE_KEY);
+        const parsedValue = Number.parseInt(storedValue ?? '0', 10);
+        return Number.isFinite(parsedValue) ? Math.max(0, parsedValue) : 0;
+    }
+
+    refreshHighScore() {
+        const currentDistance = Math.floor(this.distance);
+
+        if (currentDistance <= this.highScore) {
+            return;
+        }
+
+        this.highScore = currentDistance;
+        window.localStorage.setItem(HIGH_SCORE_STORAGE_KEY, String(this.highScore));
     }
 
 }
