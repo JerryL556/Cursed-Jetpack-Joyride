@@ -39,12 +39,21 @@ export class Start extends Phaser.Scene {
         this.nextMissileAt = 0;
         this.nextPickupAt = 0;
         this.nextChestAt = 0;
+        this.nextBossCoinAt = 0;
         this.missileWarnings = [];
         this.jetpackBullets = [];
         this.jetpackShells = [];
         this.jetpackMuzzleParticles = [];
         this.jetpackImpactParticles = [];
         this.jetpackFireTimer = 0;
+        this.bossMode = false;
+        this.bossIntro = false;
+        this.bossCooldownTimer = 0;
+        this.boss = null;
+        this.bossHp = 0;
+        this.bossMaxHp = 100;
+        this.bossTargetX = GAME_WIDTH - 170;
+        this.bossTargetY = BOTTOM_BOUNDARY - 10;
 
         this.createTextures();
         this.createBackground();
@@ -269,6 +278,35 @@ export class Start extends Phaser.Scene {
             graphics.generateTexture('coin-chest', 52, 36);
             graphics.destroy();
         }
+
+        if (!this.textures.exists('boss-chest')) {
+            const graphics = this.make.graphics({ x: 0, y: 0, add: false });
+            graphics.fillStyle(0x351315, 1);
+            graphics.fillRect(0, 8, 52, 28);
+            graphics.fillStyle(0x6b2431, 1);
+            graphics.fillRect(4, 12, 44, 20);
+            graphics.fillStyle(0xa73d4f, 1);
+            graphics.fillRect(0, 4, 52, 10);
+            graphics.fillStyle(0xffc15c, 1);
+            graphics.fillRect(22, 8, 8, 22);
+            graphics.fillRect(6, 16, 40, 4);
+            graphics.fillStyle(0x2a0b11, 1);
+            graphics.fillRect(20, 18, 12, 8);
+            graphics.generateTexture('boss-chest', 52, 36);
+            graphics.destroy();
+        }
+
+        if (!this.textures.exists('red-coin')) {
+            const graphics = this.make.graphics({ x: 0, y: 0, add: false });
+            pixel(graphics, 2, 0, 4, 1, 0xffd3d3);
+            pixel(graphics, 1, 1, 6, 1, 0xff9d9d);
+            pixel(graphics, 0, 2, 8, 4, 0xd63f4d);
+            pixel(graphics, 1, 6, 6, 1, 0xff9d9d);
+            pixel(graphics, 2, 7, 4, 1, 0xffd3d3);
+            pixel(graphics, 3, 2, 2, 4, 0xffc7c7);
+            graphics.generateTexture('red-coin', 32, 32);
+            graphics.destroy();
+        }
     }
 
     createBackground() {
@@ -374,6 +412,18 @@ export class Start extends Phaser.Scene {
             'RUN OVER\nCAUSE: -\nBEST 0000\nPRESS SPACE OR CLICK TO RESTART',
             { fontFamily: 'monospace', fontSize: '32px', color: '#fff2c7', align: 'center' }
         ).setOrigin(0.5).setDepth(6).setVisible(false);
+        this.bossText = this.add.text(GAME_WIDTH / 2, 36, 'BOSS CHEST 100 HP', {
+            fontFamily: 'monospace',
+            fontSize: '28px',
+            color: '#ff8d97'
+        }).setOrigin(0.5, 0).setDepth(6).setVisible(false);
+        this.bossBarBg = this.add.rectangle(GAME_WIDTH / 2, 72, 420, 12, 0x160b0d, 0.9)
+            .setDepth(6)
+            .setVisible(false);
+        this.bossBar = this.add.rectangle((GAME_WIDTH / 2) - 210, 72, 420, 12, 0xd63f4d, 1)
+            .setOrigin(0, 0.5)
+            .setDepth(7)
+            .setVisible(false);
     }
 
     createInput() {
@@ -423,6 +473,7 @@ export class Start extends Phaser.Scene {
         this.updateRocketSalvoState(dt);
         this.updateWrongMagnetState(dt);
         this.updateDamageState(dt);
+        this.updateBossState(dt);
         this.updatePlayerEffects();
         this.advanceJetpackEffects(dt);
         this.advanceEntities(dt);
@@ -659,6 +710,21 @@ export class Start extends Phaser.Scene {
     }
 
     handleSpawns(dt) {
+        if (this.bossMode) {
+            this.nextChestAt -= this.speed * dt;
+
+            if (this.nextChestAt <= 0) {
+                this.spawnChest(false);
+                this.nextChestAt = Phaser.Math.Between(1700, 2400);
+            }
+
+            return;
+        }
+
+        if (this.bossCooldownTimer > 0) {
+            return;
+        }
+
         this.nextZapperAt -= this.speed * dt;
         this.nextMissileAt -= this.speed * dt;
         this.nextPickupAt -= this.speed * dt;
@@ -684,6 +750,40 @@ export class Start extends Phaser.Scene {
         if (this.nextChestAt <= 0) {
             this.spawnChest();
             this.nextChestAt = Phaser.Math.Between(1700, 2400);
+        }
+    }
+
+    updateBossState(dt) {
+        if (this.bossCooldownTimer > 0 && !this.bossMode) {
+            this.bossCooldownTimer = Math.max(0, this.bossCooldownTimer - dt);
+
+            if (this.bossCooldownTimer === 0) {
+                this.resetSpawnTimers();
+            }
+        }
+
+        if (!this.boss) {
+            return;
+        }
+
+        if (this.bossIntro) {
+            this.boss.x = Phaser.Math.Linear(this.boss.x, this.bossTargetX, 0.08);
+            this.boss.y = Phaser.Math.Linear(this.boss.y, this.bossTargetY, 0.08);
+
+            if (Math.abs(this.boss.x - this.bossTargetX) < 2 && Math.abs(this.boss.y - this.bossTargetY) < 2) {
+                this.boss.x = this.bossTargetX;
+                this.boss.y = this.bossTargetY;
+                this.bossIntro = false;
+                this.nextBossCoinAt = 0.18;
+            }
+        } else if (this.bossMode) {
+            this.boss.y = this.bossTargetY + Math.sin(this.time.now * 0.004) * 6;
+            this.nextBossCoinAt -= dt;
+
+            if (this.nextBossCoinAt <= 0) {
+                this.spawnBossCoinWarning();
+                this.nextBossCoinAt = Phaser.Math.Between(12, 24) / 100;
+            }
         }
     }
 
@@ -893,21 +993,39 @@ export class Start extends Phaser.Scene {
         pickup.body.setOffset(5, 5);
     }
 
-    spawnChest() {
-        const chest = this.chests.create(GAME_WIDTH + 120, BOTTOM_BOUNDARY - 10, 'coin-chest');
+    spawnChest(allowBoss = true) {
+        const spawnBoss = allowBoss && !this.bossMode && this.bossCooldownTimer <= 0 && Phaser.Math.Between(1, 100) <= 10;
+        const chest = this.chests.create(GAME_WIDTH + 120, BOTTOM_BOUNDARY - 10, spawnBoss ? 'boss-chest' : 'coin-chest');
         chest.setOrigin(0.5, 1);
         chest.setDepth(2);
         chest.body.setSize(44, 28);
         chest.body.setOffset(4, 8);
-        chest.rewardCoins = 15;
+        chest.rewardCoins = spawnBoss ? 0 : 15;
+        chest.chestType = spawnBoss ? 'boss' : 'regular';
     }
 
     burstChestCoins(chest) {
+        if (chest.chestType === 'boss') {
+            this.startBossFight(chest);
+            return;
+        }
+
+        if (this.bossMode) {
+            this.spawnChestExplosion(chest.x, chest.y - 16);
+            this.damageBoss(10);
+            return;
+        }
+
         const burstX = chest.x;
         const burstY = chest.y - 26;
+        this.spawnRewardCoinBurst(burstX, burstY, chest.rewardCoins);
 
-        for (let index = 0; index < chest.rewardCoins; index++) {
-            const coin = this.coins.create(burstX + Phaser.Math.Between(-8, 8), burstY + Phaser.Math.Between(-6, 6), 'coin');
+        this.spawnChestExplosion(chest.x, chest.y - 16);
+    }
+
+    spawnRewardCoinBurst(x, y, count) {
+        for (let index = 0; index < count; index++) {
+            const coin = this.coins.create(x + Phaser.Math.Between(-8, 8), y + Phaser.Math.Between(-6, 6), 'coin');
             coin.body.setCircle(12, 4, 4);
             coin.body.setImmovable(true);
             coin.collected = false;
@@ -917,8 +1035,6 @@ export class Start extends Phaser.Scene {
             coin.vy = Phaser.Math.Between(-260, -120);
             coin.setDepth(3);
         }
-
-        this.spawnChestExplosion(chest.x, chest.y - 16);
     }
 
     spawnChestExplosion(x, y) {
@@ -961,12 +1077,52 @@ export class Start extends Phaser.Scene {
         this.missileWarnings.push(warning);
     }
 
+    spawnBossCoinWarning() {
+        const arenaTop = TOP_BOUNDARY + 60;
+        const arenaBottom = BOTTOM_BOUNDARY - 60;
+        const arenaHeight = arenaBottom - arenaTop;
+        const upperLimit = arenaTop + (arenaHeight * 0.75);
+        const preferUpper = Phaser.Math.Between(1, 100) <= 85;
+        const y = preferUpper
+            ? Phaser.Math.Between(Math.floor(arenaTop), Math.floor(upperLimit))
+            : Phaser.Math.Between(Math.floor(upperLimit), Math.floor(arenaBottom));
+        const warning = this.add.sprite(GAME_WIDTH - 64, y, 'warning');
+        warning.setDepth(4);
+        warning.setTint(0xff6674);
+
+        this.tweens.add({
+            targets: warning,
+            alpha: 0.15,
+            duration: 80,
+            yoyo: true,
+            repeat: 3,
+            onComplete: () => {
+                warning.destroy();
+                if (!this.isGameOver && this.bossMode && this.boss) {
+                    this.spawnBossCoin(y);
+                }
+            }
+        });
+
+        this.missileWarnings.push(warning);
+    }
+
     spawnMissile(y) {
         const missile = this.missiles.create(GAME_WIDTH + 80, y, 'missile');
         missile.hazardType = 'missile';
         missile.body.setSize(48, 20);
         missile.body.setOffset(0, 4);
         missile.body.setImmovable(true);
+        missile.moveSpeed = this.speed + 140;
+    }
+
+    spawnBossCoin(y) {
+        const projectile = this.missiles.create(GAME_WIDTH + 80, y, 'red-coin');
+        projectile.hazardType = 'red-coin';
+        projectile.body.setCircle(12, 4, 4);
+        projectile.body.setImmovable(true);
+        projectile.setDepth(4);
+        projectile.moveSpeed = this.speed + 360;
     }
 
     advanceEntities(dt) {
@@ -976,7 +1132,7 @@ export class Start extends Phaser.Scene {
                     return;
                 }
 
-                entity.x -= baseSpeed * dt;
+                entity.x -= (entity.moveSpeed ?? baseSpeed) * dt;
 
                 if (this.wrongMagnet && entity.texture?.key === 'coin' && !entity.homeToPlayer) {
                     const dx = entity.x - this.player.x;
@@ -1076,6 +1232,76 @@ export class Start extends Phaser.Scene {
         pickup.destroy();
     }
 
+    startBossFight(chest) {
+        this.spawnChestExplosion(chest.x, chest.y - 16);
+        this.clearNormalEncounterObjects();
+        this.bossMode = true;
+        this.bossIntro = true;
+        this.bossCooldownTimer = 0;
+        this.bossHp = this.bossMaxHp;
+        this.nextBossCoinAt = 0;
+        this.nextZapperAt = Number.POSITIVE_INFINITY;
+        this.nextMissileAt = Number.POSITIVE_INFINITY;
+        this.nextPickupAt = Number.POSITIVE_INFINITY;
+        this.nextChestAt = 900;
+        this.boss = this.add.image(chest.x, chest.y, 'boss-chest');
+        this.boss.setOrigin(0.5, 1);
+        this.boss.setDepth(4);
+        chest.destroy();
+    }
+
+    clearNormalEncounterObjects() {
+        this.hazards.getChildren().forEach((hazard) => {
+            if (hazard.visual) {
+                hazard.visual.destroy();
+            }
+            hazard.destroy();
+        });
+        this.coins.getChildren().forEach((coin) => coin.destroy());
+        this.pickups.getChildren().forEach((pickup) => pickup.destroy());
+        this.missiles.getChildren().forEach((missile) => missile.destroy());
+        this.missileWarnings.forEach((warning) => warning.destroy());
+        this.missileWarnings = [];
+    }
+
+    damageBoss(amount) {
+        if (!this.bossMode || !this.boss) {
+            return;
+        }
+
+        this.bossHp = Math.max(0, this.bossHp - amount);
+        this.boss.setTint(this.bossHp > 0 ? 0xffb0b7 : 0xffffff);
+        this.time.delayedCall(100, () => {
+            if (this.boss) {
+                this.boss.clearTint();
+            }
+        });
+
+        if (this.bossHp === 0) {
+            this.defeatBoss();
+        }
+    }
+
+    defeatBoss() {
+        if (!this.boss) {
+            return;
+        }
+
+        this.spawnChestExplosion(this.boss.x, this.boss.y - 16);
+        this.spawnRewardCoinBurst(this.boss.x, this.boss.y - 26, 100);
+        this.boss.destroy();
+        this.boss = null;
+        this.bossMode = false;
+        this.bossIntro = false;
+        this.bossCooldownTimer = 5;
+        this.nextBossCoinAt = 0;
+        this.missiles.getChildren().forEach((projectile) => projectile.destroy());
+        this.missileWarnings.forEach((warning) => warning.destroy());
+        this.missileWarnings = [];
+        this.chests.getChildren().forEach((chest) => chest.destroy());
+        this.helpText.setText('BOSS DOWN - NORMAL SPAWNS RETURN IN 5 SECONDS');
+    }
+
     hitHazard(hazard) {
         if (this.isGameOver) {
             return;
@@ -1099,6 +1325,8 @@ export class Start extends Phaser.Scene {
 
         if (hazard?.hazardType === 'missile') {
             this.deathReason = 'HIT BY MISSILE';
+        } else if (hazard?.hazardType === 'red-coin') {
+            this.deathReason = 'STRUCK BY RED COIN';
         } else if (hazard?.hazardType === 'lava') {
             this.deathReason = 'BURNED BY LAVA';
         } else {
@@ -1133,6 +1361,19 @@ export class Start extends Phaser.Scene {
         this.scoreText.setText(`DIST ${Math.floor(this.distance).toString().padStart(4, '0')}`);
         this.coinText.setText(`COINS ${this.coinScore.toString().padStart(2, '0')}`);
         this.highScoreText.setText(`BEST ${this.highScore.toString().padStart(4, '0')}`);
+        const bossVisible = this.bossMode && this.boss;
+        this.bossText.setVisible(Boolean(bossVisible));
+        this.bossBarBg.setVisible(Boolean(bossVisible));
+        this.bossBar.setVisible(Boolean(bossVisible));
+
+        if (bossVisible) {
+            this.bossText.setText(`BOSS CHEST ${this.bossHp.toString().padStart(3, ' ')} HP`);
+            this.bossBar.width = 420 * (this.bossHp / this.bossMaxHp);
+            this.helpText.setText('BREAK CHESTS TO DAMAGE THE BOSS');
+        } else if (!this.isGameOver && this.bossCooldownTimer <= 0) {
+            this.helpText.setText('SPACE OR LEFT CLICK TO FLY');
+        }
+
         const statuses = [];
         if (this.floorIsLava) {
             statuses.push({
